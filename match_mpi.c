@@ -84,6 +84,11 @@ int getBallChaserIdInTeam(int expectedRoundToCatch[NUM_PLAYER_PER_TEAM]) {
 	return res;
 }
 
+int getBallChallenge(int dribbingSkill) {
+	int r = 1 + randomInt(9);
+	return r * dribbingSkill;
+}
+
 int moveToBall(int coor[2], int ball[2],int maxChasableDistance, int *xNew, int *yNew) {
 	int x = coor[X], y = coor[Y], xBall = ball[X], yBall = ball[Y];
 	if (calDistance(x, y, xBall, yBall) <= maxChasableDistance) {
@@ -114,7 +119,8 @@ int main(int argc,char *argv[]) {
 	int numtasks, rank;
 	int ball[2], players[NUM_TEAM][NUM_PLAYER_PER_TEAM][2], expectedRoundToCatch[NUM_PLAYER_PER_TEAM], ballChallenge[NUM_TEAM][NUM_PLAYER_PER_TEAM];
 	int isFieldProcess = -1, teamId = -1, rankInTeam = -1, row = -1, col = -1;
-	int attribute[NUM_ATTRIBUTE], distToBall, maxChasableSteps, ballChaserId;
+	int attribute[NUM_ATTRIBUTE], distToBall, maxChasableSteps, ballChaserId, color, reached;
+	int xBuf[NUM_PLAYER_PER_TEAM * 2], yBuf[NUM_PLAYER_PER_TEAM * 2], ballChallengeBuf[NUM_PLAYER_PER_TEAM * 2];
 
 	MPI_Init(&argc,&argv);
 	MPI_Comm_size(MPI_COMM_WORLD, &numtasks);
@@ -125,6 +131,7 @@ int main(int argc,char *argv[]) {
 	if (isFieldProcess) {
 		row = rank / GRID_LENGTH;
 		col = rank % GRID_LENGTH;
+		color = rank;
 	}
 	if (!isFieldProcess) {
 		teamId = (rank - GRID_WIDTH * GRID_LENGTH ) / NUM_PLAYER_PER_TEAM;
@@ -143,8 +150,8 @@ int main(int argc,char *argv[]) {
 		}
 	}
 
-	MPI_Group worldGroup, fieldGroup , teamGroup[NUM_TEAM], thisProcessGroup;
-	MPI_Comm fieldComm, teamComm[NUM_TEAM];
+	MPI_Group worldGroup, fieldGroup , teamGroup[NUM_TEAM];
+	MPI_Comm fieldComm, teamComm[NUM_TEAM], coloredComm;
 	MPI_Comm_group(MPI_COMM_WORLD, &worldGroup);
 	MPI_Group_incl(worldGroup, GRID_WIDTH * GRID_LENGTH, fieldRanks, &fieldGroup);
 	MPI_Comm_create(MPI_COMM_WORLD, fieldGroup, &fieldComm);
@@ -152,7 +159,6 @@ int main(int argc,char *argv[]) {
 		MPI_Group_incl(worldGroup, NUM_PLAYER_PER_TEAM, teamRanks[i], &teamGroup[i]);
 		MPI_Comm_create(MPI_COMM_WORLD, teamGroup[i], &teamComm[i]);
 	}
-	// MPI_Group_incl(world_group, 1, &rank, &thisProcessGroup);
 
 	// int tmp1=-1, tmp2=-1;
 	// if (teamComm[0] != MPI_COMM_NULL) {
@@ -165,23 +171,13 @@ int main(int argc,char *argv[]) {
 	if (isFieldProcess) {
 		ball[X] = LENGTH / 2; ball[Y] = WIDTH / 2;
 	} else {
+		initiateAttribute(attribute);
+		maxChasableSteps = maxChasableDistance(attribute[SPEED]);
 		players[teamId][rankInTeam][X] = randomInt(LENGTH);
 		players[teamId][rankInTeam][Y] = randomInt(WIDTH);
-		maxChasableSteps = maxChasableDistance(attribute[SPEED]);
+		
 	}
 
-	if (!isFieldProcess) {
-		initiateAttribute(attribute);
-	}
-	
-	// if (MPI_COMM_NULL == teamComm[1]) printf("%d fuck\n", rank);
-	
-	// for (int i=0; i<GRID_WIDTH; i++) {
-	// 	for (int j=0; j<GRID_LENGTH; j++) {
-	// 		if (rank == 0) printf("%d %d, i %d, j %d : %d\n", ball[0], ball[1], i, j, isInsidePatch(i, j, ball));
-	// 	}
-	// }
-	
 	for (int i=0; i<NUM_ROUND_PER_HALF; i++) {
 		MPI_Bcast(&ball, 2, MPI_INT, 0, MPI_COMM_WORLD);
 		MPI_Barrier(MPI_COMM_WORLD);
@@ -195,12 +191,42 @@ int main(int argc,char *argv[]) {
 				MPI_Barrier(teamComm[teamId]);
 			}
 			ballChaserId = getBallChaserIdInTeam(expectedRoundToCatch);
+			reached = 0;
 			if (rankInTeam == ballChaserId) {
 				int xNew, yNew;
-				moveToBall(players[teamId][rankInTeam], ball, maxChasableSteps, &xNew, &yNew);
+				reached = moveToBall(players[teamId][rankInTeam], ball, maxChasableSteps, &xNew, &yNew);
 				players[teamId][rankInTeam][X] = xNew; players[teamId][rankInTeam][Y] = yNew;
+				ballChallenge[teamId][rankInTeam] = getBallChallenge(attribute[DRIBBING]);
 			}
+			color = getPatch(players[teamId][rankInTeam]);
+			
 		}
+		// printf("RANK %d, color %d, x %d, y %d\n", rank, color, players[teamId][rankInTeam][X], players[teamId][rankInTeam][Y]);
+		MPI_Comm_split(MPI_COMM_WORLD, color, rank, &coloredComm);
+		MPI_Barrier(MPI_COMM_WORLD);
+		
+		// int bla[1] = {41};
+		// int buffer[100];
+		// MPI_Gather(bla, 1, MPI_INT, buffer, 1, MPI_INT, 0, coloredComm);
+		// MPI_Barrier(MPI_COMM_WORLD);
+		MPI_Gather(&players[teamId][rankInTeam][X], 1, MPI_INT, xBuf, 1, MPI_INT, 0, coloredComm);
+		MPI_Barrier(MPI_COMM_WORLD);
+		MPI_Gather(&players[teamId][rankInTeam][Y], 1, MPI_INT, yBuf, 1, MPI_INT, 0, coloredComm);
+		MPI_Barrier(MPI_COMM_WORLD);
+		MPI_Gather(&ballChallenge[teamId][rankInTeam], 1, MPI_INT, ballChallengeBuf, 1, MPI_INT, 0, coloredComm);
+		MPI_Barrier(MPI_COMM_WORLD);
+		if (isFieldProcess) {
+			int numContesters;
+			MPI_Comm_size(coloredComm, &numContesters);
+			for (int j=0; j<numContesters-1; j++) {
+				printf("rank %d, x%d: %d, %d\n", rank, j, xBuf[j], yBuf[j]);
+			}
+		} 
+		else {
+			// printf("RANK %d, color %d, x %d, y %d\n", rank, color, players[teamId][rankInTeam][X], players[teamId][rankInTeam][Y]);
+		}
+		MPI_Comm_free(&coloredComm);
+
 	}
 
 	
