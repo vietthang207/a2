@@ -278,10 +278,17 @@ int main(int argc,char *argv[]) {
 
 	for (int i=0; i<NUM_ROUND_PER_HALF * 2; i++) {
 		halfNo = (i < NUM_ROUND_PER_HALF) ? 0 : 1;
+
+		// Process 0 broadcast ball location to all other processes
 		MPI_Bcast(ball, 2, MPI_INT, 0, MPI_COMM_WORLD);
 		MPI_Barrier(MPI_COMM_WORLD);
-		color = rank;		
+
+		color = rank;	
+		
+		// Strategy discussion among players of the same team
 		if (!isFieldProcess) {
+			// Each player calculate their distance to ball, then calculate how many round he need to get to the ball
+			// and then broadcast this information to his teammates.
 			ballChallenge[teamId][rankInTeam] = -1;
 			distToBall = calDistance(ball[X], ball[Y], players[teamId][rankInTeam][X], players[teamId][rankInTeam][Y]);
 			expectedRoundToCatch[rankInTeam] = distToBall / maxChasableSteps;
@@ -290,6 +297,9 @@ int main(int argc,char *argv[]) {
 				MPI_Bcast(&expectedRoundToCatch[j], 1, MPI_INT, j, teamComm[teamId]);
 				MPI_Barrier(teamComm[teamId]);
 			}
+			
+			// The player who can reach the ball fastest (least number of rounds needed) 
+			// will run toward the ball. All other players on his team will not run.
 			ballChaserId = getBallChaserIdInTeam(expectedRoundToCatch);
 			reached = 0;
 			if (rankInTeam == ballChaserId) {
@@ -300,6 +310,10 @@ int main(int argc,char *argv[]) {
 			}
 			color = getPatch(players[teamId][rankInTeam]);
 		}
+
+		// Players send their coordinate, ball challenge and rank to the respected field process
+		// Implementation note: players that stand on the same patch will share the same color with the patch
+		// which is the process rank of the corresponding field process.
 		MPI_Comm_split(MPI_COMM_WORLD, color, rank, &coloredComm);
 		MPI_Barrier(MPI_COMM_WORLD);
 		MPI_Gather(&players[teamId][rankInTeam][X], 1, MPI_INT, xBuf, 1, MPI_INT, 0, coloredComm);
@@ -310,6 +324,9 @@ int main(int argc,char *argv[]) {
 		MPI_Barrier(MPI_COMM_WORLD);
 		MPI_Gather(&rank, 1, MPI_INT, rankBuffer, 1, MPI_INT, 0, coloredComm);
 		MPI_Barrier(MPI_COMM_WORLD);
+
+		// The field process that has the ball will choose the ball winner and then broadcast the winner id to 
+		// all other processes
 		if (rank == getPatch(ball)) {
 			int numContesters;
 			MPI_Comm_size(coloredComm, &numContesters);
@@ -318,6 +335,9 @@ int main(int argc,char *argv[]) {
 		}
 		MPI_Bcast(ballWinnerBuff, 1, MPI_INT, getPatch(ball), MPI_COMM_WORLD);
 		MPI_Barrier(MPI_COMM_WORLD);
+
+		// If a player wins the ball, he will shoot is toward the goal, and then broadcast 
+		// the new location of the ball to all other processes.
 		if (rank == ballWinnerBuff[0]) {
 			// kick the ball
 			int xNew, yNew;
@@ -330,6 +350,7 @@ int main(int argc,char *argv[]) {
 		}
 		MPI_Comm_free(&coloredComm);
 
+		// Transfer players' data to process 0
 		if (rank == 0 || rank >= GRID_LENGTH * GRID_WIDTH) {
 			color = 0;
 		} else {
@@ -350,6 +371,7 @@ int main(int argc,char *argv[]) {
 		}
 		MPI_Comm_free(&coloredComm);
 
+		// Process 0 print output
 		if (rank == 0) {
 			for (int j=0; j<NUM_TEAM; j++) {
 				for (int k=0; k<NUM_PLAYER_PER_TEAM; k++) {
