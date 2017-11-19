@@ -142,7 +142,7 @@ int chooseBallWinner(int numContesters, int ball[2], int *xBuf, int *yBuf, int *
 }
 
 int shoot(int halfNo, int teamId, int x, int y, int kick, int *xTarget, int *yTarget) {
-	*xTarget = (halfNo==FIRST_HALF && teamId==TEAM_ONE) ? 0 : (LENGTH- 1);
+	*xTarget = ((halfNo==FIRST_HALF && teamId==TEAM_ONE) || (halfNo==SECOND_HALF && teamId==TEAM_TWO)) ? 0 : (LENGTH- 1);
 	if (y >= GOAL_LOW_Y && y <= GOAL_HIGH_Y) {
 		*yTarget = y;
 	} else if (y < GOAL_LOW_Y) {
@@ -178,17 +178,17 @@ int shoot(int halfNo, int teamId, int x, int y, int kick, int *xTarget, int *yTa
 
 int getScoreTeam(int halfNo, int xBall, int yBall) {
 	if (yBall < GOAL_LOW_Y || yBall > GOAL_HIGH_Y) return -1;
-	if (xBall == 0 && halfNo == 0) return TEAM_ONE;
-	if (xBall == LENGTH-1 && halfNo == 1) return TEAM_ONE;
-	if (xBall == 0 && halfNo == 1) return TEAM_TWO;
-	if (xBall == LENGTH-1 && halfNo == 0) return TEAM_TWO;
+	if (xBall == 0 && halfNo == FIRST_HALF) return TEAM_ONE;
+	if (xBall == LENGTH-1 && halfNo == SECOND_HALF) return TEAM_ONE;
+	if (xBall == 0 && halfNo == SECOND_HALF) return TEAM_TWO;
+	if (xBall == LENGTH-1 && halfNo == FIRST_HALF) return TEAM_TWO;
 	return -1;
 }
 
 int main(int argc,char *argv[]) {
 	int numtasks, rank;
 	int ball[2], players[NUM_TEAM][NUM_PLAYER_PER_TEAM][2], expectedRoundToCatch[NUM_PLAYER_PER_TEAM], ballChallenge[NUM_TEAM][NUM_PLAYER_PER_TEAM];
-	int oldBall[2], oldPlayers[NUM_TEAM][NUM_PLAYER_PER_TEAM];
+	int oldBall[2], oldPlayers[NUM_TEAM][NUM_PLAYER_PER_TEAM][2];
 	int isFieldProcess = -1, teamId = -1, rankInTeam = -1, row = -1, col = -1;
 	int attribute[NUM_ATTRIBUTE], distToBall, maxChasableSteps, ballChaserId, color, rankInColoredComm, reached;
 	int xBuf[NUM_PLAYER_PER_TEAM * NUM_TEAM + 1], yBuf[NUM_PLAYER_PER_TEAM * NUM_TEAM + 1];
@@ -241,7 +241,8 @@ int main(int argc,char *argv[]) {
 	
 	// Field process 0 initiate ball position 
 	if (isFieldProcess) {
-		ball[X] = LENGTH / 2; ball[Y] = WIDTH / 2;
+		ball[X] = 1 + randomInt(LENGTH - 2); ball[Y] = randomInt(WIDTH);
+		oldBall[X] = ball[X]; oldBall[Y] = ball[Y];
 		score[0] = 0; score[1] = 0;
 	} else {
 		initiateAttribute(attribute);
@@ -255,7 +256,7 @@ int main(int argc,char *argv[]) {
 		halfNo = (i < NUM_ROUND_PER_HALF) ? 0 : 1;
 		MPI_Bcast(ball, 2, MPI_INT, 0, MPI_COMM_WORLD);
 		MPI_Barrier(MPI_COMM_WORLD);
-				
+		color = rank;		
 		if (!isFieldProcess) {
 			ballChallenge[teamId][rankInTeam] = -1;
 			distToBall = calDistance(ball[X], ball[Y], players[teamId][rankInTeam][X], players[teamId][rankInTeam][Y]);
@@ -274,7 +275,7 @@ int main(int argc,char *argv[]) {
 				ballChallenge[teamId][rankInTeam] = reached ? getBallChallenge(attribute[DRIBBING]) : -1;
 			}
 			color = getPatch(players[teamId][rankInTeam]);
-			
+			// printf("rank %d, x: %d, y: %d, %d\n", rank, players[teamId][rankInTeam][X], players[teamId][rankInTeam][Y], ballChallenge[teamId][rankInTeam]);			
 		}
 		// printf("RANK %d, color %d, x %d, y %d\n", rank, color, players[teamId][rankInTeam][X], players[teamId][rankInTeam][Y]);
 		MPI_Comm_split(MPI_COMM_WORLD, color, rank, &coloredComm);
@@ -312,34 +313,78 @@ int main(int argc,char *argv[]) {
 		}
 		MPI_Comm_free(&coloredComm);
 
-		for (int j=0; j<NUM_TEAM; j++) {
-			for (int k=0; k<NUM_PLAYER_PER_TEAM; k++) {
-				MPI_Bcast(players[j][k], 2, MPI_INT, getPlayerProcessId(j, k), MPI_COMM_WORLD);
-				MPI_Barrier(MPI_COMM_WORLD);
-				MPI_Bcast(&ballChallenge[j][k], 1, MPI_INT, getPlayerProcessId(j, k), MPI_COMM_WORLD);
-				MPI_Barrier(MPI_COMM_WORLD);
-			}
+		// for (int j=0; j<NUM_TEAM; j++) {
+		// 	for (int k=0; k<NUM_PLAYER_PER_TEAM; k++) {
+		// 		MPI_Bcast(players[j][k], 2, MPI_INT, getPlayerProcessId(j, k), MPI_COMM_WORLD);
+		// 		MPI_Barrier(MPI_COMM_WORLD);
+		// 		MPI_Bcast(&ballChallenge[j][k], 1, MPI_INT, getPlayerProcessId(j, k), MPI_COMM_WORLD);
+		// 		MPI_Barrier(MPI_COMM_WORLD);
+		// 	}
+		// }
+		
+		if (rank == 0 || rank >= GRID_LENGTH * GRID_WIDTH) {
+			color = 0;
+		} else {
+			color = 1;
 		}
+		MPI_Comm_split(MPI_COMM_WORLD, color, rank, &coloredComm);
+		MPI_Barrier(MPI_COMM_WORLD);
+		if (color == 0) {
+			int tmpX = 0, tmpY = 0, tmpBc = -1;
+			if (rank != 0) {
+				tmpX = players[teamId][rankInTeam][X];
+				tmpY = players[teamId][rankInTeam][Y];
+				tmpBc = ballChallenge[teamId][rankInTeam];
+			}
+			MPI_Gather(&tmpX, 1, MPI_INT, xBuf, 1, MPI_INT, 0, coloredComm);
+			// MPI_Barrier(MPI_COMM_WORLD);
+			MPI_Gather(&tmpY, 1, MPI_INT, yBuf, 1, MPI_INT, 0, coloredComm);
+			// MPI_Barrier(MPI_COMM_WORLD);
+			MPI_Gather(&tmpBc, 1, MPI_INT, ballChallengeBuf, 1, MPI_INT, 0, coloredComm);
+			// MPI_Barrier(MPI_COMM_WORLD);
+		}
+		MPI_Comm_free(&coloredComm);
 
 		if (rank == 0) {
-			printf("round %d\n", i);
-			printf("ball is in %d %d\n", ball[X], ball[Y]);
-			printf("%d win the ball\n", ballWinnerBuff[0]);
 			for (int j=0; j<NUM_TEAM; j++) {
 				for (int k=0; k<NUM_PLAYER_PER_TEAM; k++) {
-					printf("%d, x: %d, y: %d, bc: %d\n", getPlayerProcessId(j, k), players[j][k][X], players[j][k][Y], ballChallenge[j][k]);
+					int index = 1 + j * NUM_PLAYER_PER_TEAM + k;
+					oldPlayers[j][k][X] = players[j][k][X];
+					oldPlayers[j][k][Y] = players[j][k][Y];
+					players[j][k][X] = xBuf[index];
+					players[j][k][Y] = yBuf[index];
+					ballChallenge[j][k] = ballChallengeBuf[index];
+				}
+			}
+			printf("Round %d\n", i);
+			printf("Ball is in %d %d\n", ball[X], ball[Y]);
+			printf("%d win the ball\n", ballWinnerBuff[0]);
+			
+			for (int j=0; j<NUM_TEAM; j++) {
+				printf("Team %d:\n", j + 1);
+				for (int k=0; k<NUM_PLAYER_PER_TEAM; k++) {
+					printf("%2d, old x: %3d, old y: %2d, ", k, oldPlayers[j][k][X], oldPlayers[j][k][Y]);
+					printf("final x: %3d, final y: %2d, ", players[j][k][X], players[j][k][Y]);
+					reached = (oldBall[X]==players[j][k][X] && oldBall[Y]==players[j][k][Y]);
+					int kicked = (getPlayerProcessId(j, k) == ballWinnerBuff[0]);
+					printf("reached %d, kicked %d, bc %4d\n", reached, kicked, ballChallenge[j][k]);
 				}
 			}
 			int scoreTeam = getScoreTeam(halfNo, ball[X], ball[Y]);
 			if (scoreTeam != -1) {
 				score[scoreTeam] ++;
-				if (scoreTeam==TEAM_ONE) printf("Team A score!!!\n");
-				else printf("Team B score!!!\n");
-				ball[X] = LENGTH / 2; ball[Y] = WIDTH / 2;
+				if (scoreTeam==TEAM_ONE) printf("GOAL GOAL GOAL GOAL GOAL GOAL GOAL Team A score!!!\n");
+				else printf("GOAL GOAL GOAL GOAL GOAL GOAL GOAL Team B score!!!\n");
+				ball[X] = 1 + randomInt(LENGTH - 2); ball[Y] = randomInt(WIDTH);
+				// printf("round %d\n", i);
+				// printf("new ball %d %d\n", ball[0], ball[1]);
+				// printf("Score: %d - %d\n", score[TEAM_ONE], score[TEAM_TWO]);
 			}
 			printf("Score: %d - %d\n", score[0], score[1]);
 			// if (ballWinnerBuff[0]!=-1 && (ballWinnerBuff[0] < 12 || ballWinnerBuff[0] > 33)) printf("%d\n", ballWinnerBuff[0]);
 		}
+		oldBall[X] = ball[X]; oldBall[Y] = ball[Y];
+		
 	}
 
 	
