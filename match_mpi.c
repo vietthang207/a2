@@ -339,7 +339,6 @@ int main(int argc,char *argv[]) {
 		// If a player wins the ball, he will shoot is toward the goal, and then broadcast 
 		// the new location of the ball to all other processes.
 		if (rank == ballWinnerBuff[0]) {
-			// kick the ball
 			int xNew, yNew;
 			shoot(halfNo, teamId, ball[X], ball[Y], attribute[KICK], &xNew, &yNew);
 			ball[X] = xNew; ball[Y] = yNew;
