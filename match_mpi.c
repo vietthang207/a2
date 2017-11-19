@@ -5,6 +5,8 @@
 
 #define WIDTH 96
 #define LENGTH 128
+#define GOAL_LOW_Y 43
+#define GOAL_HIGH_Y 51
 #define PATCH_SIZE 32
 #define GRID_WIDTH 3
 #define GRID_LENGTH 4
@@ -15,13 +17,17 @@
 #define MAX_ATTRIBUTE 10
 #define NUM_ATTRIBUTE 3
 #define MAX_STEP 10
-#define NUM_ROUND_PER_HALF 1
+#define NUM_ROUND_PER_HALF 2700
 #define X 0
 #define Y 1
 #define SPEED 0
 #define DRIBBING 1
 #define KICK 2
 #define INF 1000000
+#define FIRST_HALF 0
+#define SECOND_HALF 1
+#define TEAM_ONE 0
+#define TEAM_TWO 1
 
 int minOf(int x, int y) {
 	if (x <= y) return x;
@@ -115,12 +121,79 @@ int moveToBall(int coor[2], int ball[2],int maxChasableDistance, int *xNew, int 
 	return 0;
 }
 
+int chooseBallWinner(int numContesters, int ball[2], int *xBuf, int *yBuf, int *ballChallengeBuf, int *rankBuffer) {
+	if (numContesters == 0) return -1;
+	int numMax = 0, maxi = -INF;
+	int tieBreak[NUM_PLAYER_PER_TEAM * NUM_TEAM];
+	for (int i=1; i<=numContesters; i++) {
+		if (xBuf[i]!=ball[X] || yBuf[i]!=ball[Y]) continue;
+		if (ballChallengeBuf[i] > maxi) {
+			maxi = ballChallengeBuf[i];
+			tieBreak[0] = i;
+			numMax = 1;
+		} else if (ballChallengeBuf[i] == maxi) {
+			tieBreak[numMax] = i;
+			numMax ++;
+		}
+	}
+	if (numMax < 1) return -1;
+	int r = randomInt(numMax);
+	return rankBuffer[tieBreak[r]];
+}
+
+int shoot(int halfNo, int teamId, int x, int y, int kick, int *xTarget, int *yTarget) {
+	*xTarget = (halfNo==FIRST_HALF && teamId==TEAM_ONE) ? 0 : (LENGTH- 1);
+	if (y >= GOAL_LOW_Y && y <= GOAL_HIGH_Y) {
+		*yTarget = y;
+	} else if (y < GOAL_LOW_Y) {
+		*yTarget = GOAL_LOW_Y;
+	} else {
+		*yTarget = GOAL_HIGH_Y;
+	}
+	int dist = calDistance(x, y, *xTarget, *yTarget);
+	int maxKick = kick * 2;
+	if (maxKick >= dist) {
+		return 1;
+	} 
+	int xDist = abs(*xTarget - x);
+	int yDist = abs(*yTarget - y);
+	if (xDist > maxKick) {
+		if (*xTarget > x) {
+			*xTarget = x + maxKick;
+		} else {
+			*xTarget = x - maxKick;
+		}
+		*yTarget = y;
+		return 0;
+	} else {
+		maxKick -= xDist;
+		if (*yTarget > y) {
+			*yTarget = y + maxKick;
+		} else {
+			*yTarget = y - maxKick;
+		}
+		return 0;
+	}
+}
+
+int getScoreTeam(int halfNo, int xBall, int yBall) {
+	if (yBall < GOAL_LOW_Y || yBall > GOAL_HIGH_Y) return -1;
+	if (xBall == 0 && halfNo == 0) return TEAM_ONE;
+	if (xBall == LENGTH-1 && halfNo == 1) return TEAM_ONE;
+	if (xBall == 0 && halfNo == 1) return TEAM_TWO;
+	if (xBall == LENGTH-1 && halfNo == 0) return TEAM_TWO;
+	return -1;
+}
+
 int main(int argc,char *argv[]) {
 	int numtasks, rank;
 	int ball[2], players[NUM_TEAM][NUM_PLAYER_PER_TEAM][2], expectedRoundToCatch[NUM_PLAYER_PER_TEAM], ballChallenge[NUM_TEAM][NUM_PLAYER_PER_TEAM];
+	int oldBall[2], oldPlayers[NUM_TEAM][NUM_PLAYER_PER_TEAM];
 	int isFieldProcess = -1, teamId = -1, rankInTeam = -1, row = -1, col = -1;
-	int attribute[NUM_ATTRIBUTE], distToBall, maxChasableSteps, ballChaserId, color, reached;
-	int xBuf[NUM_PLAYER_PER_TEAM * 2], yBuf[NUM_PLAYER_PER_TEAM * 2], ballChallengeBuf[NUM_PLAYER_PER_TEAM * 2];
+	int attribute[NUM_ATTRIBUTE], distToBall, maxChasableSteps, ballChaserId, color, rankInColoredComm, reached;
+	int xBuf[NUM_PLAYER_PER_TEAM * NUM_TEAM + 1], yBuf[NUM_PLAYER_PER_TEAM * NUM_TEAM + 1];
+	int ballChallengeBuf[NUM_PLAYER_PER_TEAM * NUM_TEAM + 1], rankBuffer[NUM_PLAYER_PER_TEAM * NUM_TEAM + 1], ballWinnerBuff[1];
+	int halfNo, score[2];
 
 	MPI_Init(&argc,&argv);
 	MPI_Comm_size(MPI_COMM_WORLD, &numtasks);
@@ -149,7 +222,6 @@ int main(int argc,char *argv[]) {
 			teamRanks[i][j] = GRID_WIDTH * GRID_LENGTH + i * NUM_PLAYER_PER_TEAM + j;
 		}
 	}
-
 	MPI_Group worldGroup, fieldGroup , teamGroup[NUM_TEAM];
 	MPI_Comm fieldComm, teamComm[NUM_TEAM], coloredComm;
 	MPI_Comm_group(MPI_COMM_WORLD, &worldGroup);
@@ -170,6 +242,7 @@ int main(int argc,char *argv[]) {
 	// Field process 0 initiate ball position 
 	if (isFieldProcess) {
 		ball[X] = LENGTH / 2; ball[Y] = WIDTH / 2;
+		score[0] = 0; score[1] = 0;
 	} else {
 		initiateAttribute(attribute);
 		maxChasableSteps = maxChasableDistance(attribute[SPEED]);
@@ -178,11 +251,13 @@ int main(int argc,char *argv[]) {
 		
 	}
 
-	for (int i=0; i<NUM_ROUND_PER_HALF; i++) {
-		MPI_Bcast(&ball, 2, MPI_INT, 0, MPI_COMM_WORLD);
+	for (int i=0; i<NUM_ROUND_PER_HALF * 2; i++) {
+		halfNo = (i < NUM_ROUND_PER_HALF) ? 0 : 1;
+		MPI_Bcast(ball, 2, MPI_INT, 0, MPI_COMM_WORLD);
 		MPI_Barrier(MPI_COMM_WORLD);
 				
 		if (!isFieldProcess) {
+			ballChallenge[teamId][rankInTeam] = -1;
 			distToBall = calDistance(ball[X], ball[Y], players[teamId][rankInTeam][X], players[teamId][rankInTeam][Y]);
 			expectedRoundToCatch[rankInTeam] = distToBall / maxChasableSteps;
 			if (distToBall % maxChasableSteps != 0) expectedRoundToCatch[rankInTeam] ++;
@@ -196,7 +271,7 @@ int main(int argc,char *argv[]) {
 				int xNew, yNew;
 				reached = moveToBall(players[teamId][rankInTeam], ball, maxChasableSteps, &xNew, &yNew);
 				players[teamId][rankInTeam][X] = xNew; players[teamId][rankInTeam][Y] = yNew;
-				ballChallenge[teamId][rankInTeam] = getBallChallenge(attribute[DRIBBING]);
+				ballChallenge[teamId][rankInTeam] = reached ? getBallChallenge(attribute[DRIBBING]) : -1;
 			}
 			color = getPatch(players[teamId][rankInTeam]);
 			
@@ -204,29 +279,67 @@ int main(int argc,char *argv[]) {
 		// printf("RANK %d, color %d, x %d, y %d\n", rank, color, players[teamId][rankInTeam][X], players[teamId][rankInTeam][Y]);
 		MPI_Comm_split(MPI_COMM_WORLD, color, rank, &coloredComm);
 		MPI_Barrier(MPI_COMM_WORLD);
-		
-		// int bla[1] = {41};
-		// int buffer[100];
-		// MPI_Gather(bla, 1, MPI_INT, buffer, 1, MPI_INT, 0, coloredComm);
-		// MPI_Barrier(MPI_COMM_WORLD);
 		MPI_Gather(&players[teamId][rankInTeam][X], 1, MPI_INT, xBuf, 1, MPI_INT, 0, coloredComm);
 		MPI_Barrier(MPI_COMM_WORLD);
 		MPI_Gather(&players[teamId][rankInTeam][Y], 1, MPI_INT, yBuf, 1, MPI_INT, 0, coloredComm);
 		MPI_Barrier(MPI_COMM_WORLD);
 		MPI_Gather(&ballChallenge[teamId][rankInTeam], 1, MPI_INT, ballChallengeBuf, 1, MPI_INT, 0, coloredComm);
 		MPI_Barrier(MPI_COMM_WORLD);
-		if (isFieldProcess) {
+		MPI_Gather(&rank, 1, MPI_INT, rankBuffer, 1, MPI_INT, 0, coloredComm);
+		MPI_Barrier(MPI_COMM_WORLD);
+		if (rank == getPatch(ball)) {
 			int numContesters;
 			MPI_Comm_size(coloredComm, &numContesters);
-			for (int j=0; j<numContesters-1; j++) {
-				printf("rank %d, x%d: %d, %d\n", rank, j, xBuf[j], yBuf[j]);
-			}
-		} 
-		else {
-			// printf("RANK %d, color %d, x %d, y %d\n", rank, color, players[teamId][rankInTeam][X], players[teamId][rankInTeam][Y]);
+			numContesters --;
+			ballWinnerBuff[0] = chooseBallWinner(numContesters, ball, xBuf, yBuf, ballChallengeBuf, rankBuffer);
+			// printf("Choose between %d players, ball: %d, %d\n", numContesters, ball[0], ball[1]);
+			// for (int j=0; j<=numContesters; j++) {
+			// 	printf("rank %d, x %d, y %d, bc %d\n", rankBuffer[j], xBuf[j], yBuf[j], ballChallengeBuf[j]);
+			// }
+			// printf("winner %d\n", ballWinnerBuff[0]);
+		}
+		MPI_Bcast(ballWinnerBuff, 1, MPI_INT, getPatch(ball), MPI_COMM_WORLD);
+		MPI_Barrier(MPI_COMM_WORLD);
+		if (rank == ballWinnerBuff[0]) {
+			// kick the ball
+			int xNew, yNew;
+			shoot(halfNo, teamId, ball[X], ball[Y], attribute[KICK], &xNew, &yNew);
+			ball[X] = xNew; ball[Y] = yNew;
+		}
+		if (ballWinnerBuff[0] != -1) {
+			MPI_Bcast(ball, 2, MPI_INT, ballWinnerBuff[0], MPI_COMM_WORLD);
+			MPI_Barrier(MPI_COMM_WORLD);
 		}
 		MPI_Comm_free(&coloredComm);
 
+		for (int j=0; j<NUM_TEAM; j++) {
+			for (int k=0; k<NUM_PLAYER_PER_TEAM; k++) {
+				MPI_Bcast(players[j][k], 2, MPI_INT, getPlayerProcessId(j, k), MPI_COMM_WORLD);
+				MPI_Barrier(MPI_COMM_WORLD);
+				MPI_Bcast(&ballChallenge[j][k], 1, MPI_INT, getPlayerProcessId(j, k), MPI_COMM_WORLD);
+				MPI_Barrier(MPI_COMM_WORLD);
+			}
+		}
+
+		if (rank == 0) {
+			printf("round %d\n", i);
+			printf("ball is in %d %d\n", ball[X], ball[Y]);
+			printf("%d win the ball\n", ballWinnerBuff[0]);
+			for (int j=0; j<NUM_TEAM; j++) {
+				for (int k=0; k<NUM_PLAYER_PER_TEAM; k++) {
+					printf("%d, x: %d, y: %d, bc: %d\n", getPlayerProcessId(j, k), players[j][k][X], players[j][k][Y], ballChallenge[j][k]);
+				}
+			}
+			int scoreTeam = getScoreTeam(halfNo, ball[X], ball[Y]);
+			if (scoreTeam != -1) {
+				score[scoreTeam] ++;
+				if (scoreTeam==TEAM_ONE) printf("Team A score!!!\n");
+				else printf("Team B score!!!\n");
+				ball[X] = LENGTH / 2; ball[Y] = WIDTH / 2;
+			}
+			printf("Score: %d - %d\n", score[0], score[1]);
+			// if (ballWinnerBuff[0]!=-1 && (ballWinnerBuff[0] < 12 || ballWinnerBuff[0] > 33)) printf("%d\n", ballWinnerBuff[0]);
+		}
 	}
 
 	
