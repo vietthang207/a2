@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <sys/time.h>
 
 #define WIDTH 96
 #define LENGTH 128
@@ -28,6 +29,19 @@
 #define SECOND_HALF 1
 #define TEAM_ONE 0
 #define TEAM_TWO 1
+
+long long wall_clock_time()
+{
+#ifdef __linux__
+	struct timespec tp;
+	clock_gettime(CLOCK_REALTIME, &tp);
+	return (long long)(tp.tv_nsec + (long long)tp.tv_sec * 1000000000ll);
+#else
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	return (long long)(tv.tv_usec * 1000 + (long long)tv.tv_sec * 1000000000ll);
+#endif
+}
 
 int minOf(int x, int y) {
 	if (x <= y) return x;
@@ -213,6 +227,7 @@ int getScoreTeam(int halfNo, int xBall, int yBall) {
 }
 
 int main(int argc,char *argv[]) {
+	long long startTime = wall_clock_time();
 	int numtasks, rank;
 	int ball[2], players[NUM_TEAM][NUM_PLAYER_PER_TEAM][2], expectedRoundToCatch[NUM_PLAYER_PER_TEAM], ballChallenge[NUM_TEAM][NUM_PLAYER_PER_TEAM];
 	int oldBall[2], oldPlayers[NUM_TEAM][NUM_PLAYER_PER_TEAM][2];
@@ -411,6 +426,10 @@ int main(int argc,char *argv[]) {
 
 	
 	MPI_Finalize();
+	long long endTime = wall_clock_time();
+	if (rank == 0) {
+		printf("Execution time: %1.2f\n", (endTime - startTime) / 1000000000.0);
+	}
 	
 	return 0;
 }

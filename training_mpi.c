@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <sys/time.h>
 
 #define X_OLD 0
 #define Y_OLD 1
@@ -20,6 +21,19 @@
 #define TAG_SEND_PLAYER_INFO 1
 #define TAG_SEND_WINNER_ID 2
 #define SIZE_INFO 7
+
+long long wall_clock_time()
+{
+#ifdef __linux__
+	struct timespec tp;
+	clock_gettime(CLOCK_REALTIME, &tp);
+	return (long long)(tp.tv_nsec + (long long)tp.tv_sec * 1000000000ll);
+#else
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	return (long long)(tv.tv_usec * 1000 + (long long)tv.tv_sec * 1000000000ll);
+#endif
+}
 
 int minOf(int x, int y) {
 	if (x <= y) return x;
@@ -101,6 +115,7 @@ int getBallWinner(int info[NUM_PLAYER][SIZE_INFO], int xBall, int yBall) {
 }
 
 int main(int argc,char *argv[]) {
+	long long startTime = wall_clock_time();
 	int numtasks, rank;
 	int x[NUM_PLAYER], y[NUM_PLAYER];
 	int xBall, yBall, xBallOld, yBallOld, winnerId;
@@ -214,5 +229,10 @@ int main(int argc,char *argv[]) {
 
 	MPI_Finalize();
 	
+	long long endTime = wall_clock_time();
+	if (rank == 0) {
+		printf("Execution time: %1.2f\n", (endTime - startTime) / 1000000000.0);
+	}
+
 	return 0;
 }
