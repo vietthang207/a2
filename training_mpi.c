@@ -102,7 +102,8 @@ int move(int x, int y, int xBall, int yBall, int *steps, int *xNew, int *yNew) {
 int getBallWinner(int info[NUM_PLAYER][SIZE_INFO], int xBall, int yBall) {
 	int reachedCounter = 0;
 	int reachedPlayers[NUM_PLAYER];
-	for (int i=0; i<NUM_PLAYER; i++) {
+	int i;
+	for (i=0; i<NUM_PLAYER; i++) {
 		if (calDistance(info[i][X_NEW], info[i][Y_NEW], xBall, yBall) == 0) {
 			reachedPlayers[reachedCounter] = i;
 			reachedCounter ++;
@@ -117,6 +118,7 @@ int getBallWinner(int info[NUM_PLAYER][SIZE_INFO], int xBall, int yBall) {
 int main(int argc,char *argv[]) {
 	long long startTime = wall_clock_time();
 	int numtasks, rank;
+	int i, j, k;
 	int x[NUM_PLAYER], y[NUM_PLAYER];
 	int xBall, yBall, xBallOld, yBallOld, winnerId;
 	int id, xOld, yOld, xNew, yNew, stepsRan;
@@ -140,11 +142,11 @@ int main(int argc,char *argv[]) {
 		yOld = randomInt(WIDTH);
 	}
 
-	for (int i=0; i<NUM_ROUND; i++) {
+	for (i=0; i<NUM_ROUND; i++) {
 		// Send and receive ball coordinate
 		if (rank == 0) {
 			ballBuffer[0] = xBall; ballBuffer[1] = yBall;
-			for (int j=0; j<NUM_PLAYER; j++) {
+			for (j=0; j<NUM_PLAYER; j++) {
 				MPI_Isend(ballBuffer, 2, MPI_INT, j + 1, TAG_SEND_BALL_COOR, MPI_COMM_WORLD, &sendReqs[j]);
 			}
 			MPI_Waitall(NUM_PLAYER, sendReqs, sendStats);
@@ -157,7 +159,7 @@ int main(int argc,char *argv[]) {
 
 		// Player run and send info to field
 		if (rank == 0) {
-			for (int j=0; j<NUM_PLAYER; j++) {
+			for (j=0; j<NUM_PLAYER; j++) {
 				MPI_Irecv(playersBuffer[j] , SIZE_INFO, MPI_INT, j + 1, TAG_SEND_PLAYER_INFO, MPI_COMM_WORLD, &recvReqs[j]);
 			}
 			MPI_Waitall(NUM_PLAYER, recvReqs, recvStats);
@@ -177,7 +179,7 @@ int main(int argc,char *argv[]) {
 		if (rank == 0) {
 			winnerId = getBallWinner(playersBuffer, xBall, yBall);
 			winnerBuffer[0] = winnerId;
-			for (int j=0; j<NUM_PLAYER; j++) {
+			for (j=0; j<NUM_PLAYER; j++) {
 				MPI_Isend(winnerBuffer, 1, MPI_INT, j + 1, TAG_SEND_WINNER_ID, MPI_COMM_WORLD, &sendReqs[j]);
 			}
 			MPI_Waitall(NUM_PLAYER, sendReqs, sendStats);
@@ -214,7 +216,7 @@ int main(int argc,char *argv[]) {
 			}
 			printf("Round %d\n", i);
 			printf("  Ball is at %d %d\n", xBall, yBall);
-			for (int j=0; j<NUM_PLAYER; j++) {
+			for (j=0; j<NUM_PLAYER; j++) {
 				int reached = (calDistance(playersBuffer[j][X_NEW], playersBuffer[j][Y_NEW], xBallOld, yBallOld) == 0) ? 1 : 0;
 				int kicked = (j == winnerId) ? 1 : 0;
 				printf("    %2d %3d %3d %3d %3d %d %d %4d %3d %3d\n", 

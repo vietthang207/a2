@@ -102,7 +102,8 @@ int getPlayerProcessId(int teamId, int rankInTeam) {
 // Return rank in team of that player
 int getBallChaserIdInTeam(int expectedRoundToCatch[NUM_PLAYER_PER_TEAM]) {
 	int mini = INF, res = -1;
-	for (int i=0; i<NUM_PLAYER_PER_TEAM; i++) {
+	int i;
+	for (i=0; i<NUM_PLAYER_PER_TEAM; i++) {
 		if (expectedRoundToCatch[i] < mini) {
 			mini = expectedRoundToCatch[i];
 			res = i;
@@ -157,7 +158,8 @@ int chooseBallWinner(int numContesters, int ball[2], int *xBuf, int *yBuf, int *
 	if (numContesters == 0) return -1;
 	int numMax = 0, maxi = -INF;
 	int tieBreak[NUM_PLAYER_PER_TEAM * NUM_TEAM];
-	for (int i=1; i<=numContesters; i++) {
+	int i;
+	for (i=1; i<=numContesters; i++) {
 		if (xBuf[i]!=ball[X] || yBuf[i]!=ball[Y]) continue;
 		if (ballChallengeBuf[i] > maxi) {
 			maxi = ballChallengeBuf[i];
@@ -229,6 +231,7 @@ int getScoreTeam(int halfNo, int xBall, int yBall) {
 int main(int argc,char *argv[]) {
 	long long startTime = wall_clock_time();
 	int numtasks, rank;
+	int i, j, k;
 	int ball[2], players[NUM_TEAM][NUM_PLAYER_PER_TEAM][2], expectedRoundToCatch[NUM_PLAYER_PER_TEAM], ballChallenge[NUM_TEAM][NUM_PLAYER_PER_TEAM];
 	int oldBall[2], oldPlayers[NUM_TEAM][NUM_PLAYER_PER_TEAM][2];
 	int isFieldProcess = -1, teamId = -1, rankInTeam = -1, row = -1, col = -1;
@@ -255,13 +258,13 @@ int main(int argc,char *argv[]) {
 	}
 
 	int fieldRanks[GRID_WIDTH * GRID_LENGTH], teamRanks[NUM_TEAM][NUM_PLAYER_PER_TEAM];
-	for (int i=0; i<GRID_WIDTH; i++) {
-		for (int j=0; j<GRID_LENGTH; j++) {
+	for (i=0; i<GRID_WIDTH; i++) {
+		for (j=0; j<GRID_LENGTH; j++) {
 			fieldRanks[i * GRID_LENGTH + j] = i * GRID_LENGTH + j;
 		}
 	}
-	for (int i=0; i<NUM_TEAM; i++) {
-		for (int j=0; j<NUM_PLAYER_PER_TEAM; j++) {
+	for (i=0; i<NUM_TEAM; i++) {
+		for (j=0; j<NUM_PLAYER_PER_TEAM; j++) {
 			teamRanks[i][j] = GRID_WIDTH * GRID_LENGTH + i * NUM_PLAYER_PER_TEAM + j;
 		}
 	}
@@ -273,7 +276,7 @@ int main(int argc,char *argv[]) {
 	MPI_Comm_group(MPI_COMM_WORLD, &worldGroup);
 	MPI_Group_incl(worldGroup, GRID_WIDTH * GRID_LENGTH, fieldRanks, &fieldGroup);
 	MPI_Comm_create(MPI_COMM_WORLD, fieldGroup, &fieldComm);
-	for (int i=0; i<NUM_TEAM; i++) {
+	for (i=0; i<NUM_TEAM; i++) {
 		MPI_Group_incl(worldGroup, NUM_PLAYER_PER_TEAM, teamRanks[i], &teamGroup[i]);
 		MPI_Comm_create(MPI_COMM_WORLD, teamGroup[i], &teamComm[i]);
 	}
@@ -291,7 +294,7 @@ int main(int argc,char *argv[]) {
 		
 	}
 
-	for (int i=0; i<NUM_ROUND_PER_HALF * 2; i++) {
+	for (i=0; i<NUM_ROUND_PER_HALF * 2; i++) {
 		halfNo = (i < NUM_ROUND_PER_HALF) ? 0 : 1;
 
 		// Process 0 broadcast ball location to all other processes
@@ -308,7 +311,7 @@ int main(int argc,char *argv[]) {
 			distToBall = calDistance(ball[X], ball[Y], players[teamId][rankInTeam][X], players[teamId][rankInTeam][Y]);
 			expectedRoundToCatch[rankInTeam] = distToBall / maxChasableSteps;
 			if (distToBall % maxChasableSteps != 0) expectedRoundToCatch[rankInTeam] ++;
-			for (int j=0; j<NUM_PLAYER_PER_TEAM; j++) {
+			for (j=0; j<NUM_PLAYER_PER_TEAM; j++) {
 				MPI_Bcast(&expectedRoundToCatch[j], 1, MPI_INT, j, teamComm[teamId]);
 				MPI_Barrier(teamComm[teamId]);
 			}
@@ -387,8 +390,8 @@ int main(int argc,char *argv[]) {
 
 		// Process 0 print output
 		if (rank == 0) {
-			for (int j=0; j<NUM_TEAM; j++) {
-				for (int k=0; k<NUM_PLAYER_PER_TEAM; k++) {
+			for (j=0; j<NUM_TEAM; j++) {
+				for (k=0; k<NUM_PLAYER_PER_TEAM; k++) {
 					int index = 1 + j * NUM_PLAYER_PER_TEAM + k;
 					oldPlayers[j][k][X] = players[j][k][X];
 					oldPlayers[j][k][Y] = players[j][k][Y];
@@ -401,9 +404,9 @@ int main(int argc,char *argv[]) {
 			printf("Ball is in %d %d\n", ball[X], ball[Y]);
 			printf("%d win the ball\n", ballWinnerBuff[0]);
 			
-			for (int j=0; j<NUM_TEAM; j++) {
+			for (j=0; j<NUM_TEAM; j++) {
 				printf("Team %d:\n", j + 1);
-				for (int k=0; k<NUM_PLAYER_PER_TEAM; k++) {
+				for (k=0; k<NUM_PLAYER_PER_TEAM; k++) {
 					printf("%2d, old x: %3d, old y: %2d, ", k, oldPlayers[j][k][X], oldPlayers[j][k][Y]);
 					printf("final x: %3d, final y: %2d, ", players[j][k][X], players[j][k][Y]);
 					reached = (oldBall[X]==players[j][k][X] && oldBall[Y]==players[j][k][Y]);
